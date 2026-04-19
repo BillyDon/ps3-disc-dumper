@@ -66,7 +66,7 @@ CLI --help
 
 ```
 output/
-└── GAME TITLE [PRODUCTCODE]/
+└── GAME TITLE [PRODUCTCODE].ps3/
     └── PS3_GAME/
         ├── USRDIR/
         │   └── (game data files)
@@ -75,7 +75,9 @@ output/
         └── PARAM.SFO
 ```
 
-Each game is extracted to its own directory. Compatible with RPCS3 when pointed to the parent `output/` directory.
+Each game is extracted to its own directory with `.ps3` extension for RetroBat compatibility. Compatible with:
+- **RPCS3**: Point to parent `output/` directory
+- **RetroBat/EmulationStation**: `.ps3` extension auto-detected, rescan to populate
 
 ## IRD Cache
 
