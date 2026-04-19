@@ -382,7 +382,7 @@ public partial class Dumper: IDisposable
         var path = new string(outputDirFormatter(this).ToCharArray().Where(c => !InvalidChars.Contains(c)).ToArray());
         var separators = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
         var pathParts = path.Split(separators, StringSplitOptions.RemoveEmptyEntries).Select(p => p.TrimEnd('.'));
-        OutputDir = string.Join(Path.DirectorySeparatorChar, pathParts);
+        OutputDir = string.Join(Path.DirectorySeparatorChar, pathParts) + ".ps3";
         Log.Debug($"Dump folder name: {OutputDir}");
     }
 
@@ -447,7 +447,7 @@ public partial class Dumper: IDisposable
         var path = new string(outputDirFormatter(this).ToCharArray().Where(c => !InvalidChars.Contains(c)).ToArray());
         var separators = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
         var pathParts = path.Split(separators, StringSplitOptions.RemoveEmptyEntries).Select(p => p.TrimEnd('.'));
-        OutputDir = string.Join(Path.DirectorySeparatorChar, pathParts);
+        OutputDir = string.Join(Path.DirectorySeparatorChar, pathParts) + ".ps3";
         Log.Debug($"Dump folder name: {OutputDir}");
     }
 
