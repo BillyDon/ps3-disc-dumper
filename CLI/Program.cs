@@ -149,6 +149,15 @@ async Task DumpIso(string isoPath, string outputDir, string irdCache, string dis
         AnsiConsole.WriteLine($"  Title: {dumper.Title}");
         AnsiConsole.WriteLine($"  Product Code: {dumper.ProductCode}");
 
+        // Check if already extracted
+        var gameOutputPath = Path.Combine(outputDir, dumper.OutputDir);
+        var ps3GamePath = Path.Combine(gameOutputPath, "PS3_GAME");
+        if (Directory.Exists(ps3GamePath) && Directory.GetFiles(ps3GamePath, "*.*", SearchOption.AllDirectories).Length > 0)
+        {
+            AnsiConsole.MarkupLine("  [yellow]⊘ Already extracted, skipping[/]");
+            return;
+        }
+
         // Find key
         AnsiConsole.WriteLine("  Finding decryption key...");
         await dumper.FindDiscKeyAsync(irdCache);
