@@ -75,9 +75,9 @@ output/
         └── PARAM.SFO
 ```
 
-Each game is extracted to its own directory with `.ps3` extension for RetroBat compatibility. Compatible with:
+Each game is extracted to its own directory with `.ps3` extension for emulator compatibility. Compatible with:
 - **RPCS3**: Point to parent `output/` directory
-- **RetroBat/EmulationStation**: `.ps3` extension auto-detected, rescan to populate
+- **EmulationStation-based frontends**: `.ps3` extension auto-detected, rescan to populate
 
 ## IRD Cache
 
@@ -90,11 +90,11 @@ IRD cache location: `~/.ps3-iso-dumper/ird/`
 
 ## Examples
 
-### Linux/macOS: Batch dump from ZFS pool
+### Linux/macOS: Batch dump from local directory
 ```bash
-~/ps3dump-release/CLI \
-  /tank/media/Games/roms/ps3 \
-  --output /tank/media/Games/ps3_extracted \
+CLI \
+  ~/roms/ps3 \
+  --output ~/games/ps3_extracted \
   --ird-cache ~/.ps3-iso-dumper/ird
 ```
 
