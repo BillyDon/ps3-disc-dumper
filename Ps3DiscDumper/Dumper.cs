@@ -773,14 +773,14 @@ public partial class Dumper: IDisposable
                 {
                     var trailingPeriod = targetFilename.EndsWith('.');
                     inputFilePath = Path.Combine(InputDevicePath, targetFilename);
-                    // BLES00932 Demon's Souls: trailing . is trimmed on both Windows and Linux
+                    // Some discs have trailing periods in filenames: try trimming on all platforms
                     if (trailingPeriod && !File.Exists(inputFilePath))
                     {
                         Log.Warn($"Potential mastering error in {targetFilename}");
                         targetFilename = targetFilename.TrimEnd('.');
                         inputFilePath = Path.Combine(InputDevicePath, targetFilename);
                     }
-                    // BLJS92001 Tsugime Ranko: trailing . is replaced with #ABCD in Windows, but is kept as . on Linux
+                    // Some discs replace trailing periods with special characters on Windows only
                     if (trailingPeriod && OperatingSystem.IsWindows() && !File.Exists(inputFilePath))
                     {
                         var inputDir = Path.GetDirectoryName(inputFilePath);

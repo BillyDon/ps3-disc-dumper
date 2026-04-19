@@ -129,8 +129,8 @@ Point RPCS3 to the output directory:
 ## Performance
 
 **Single Game Time** (depends on USB/disk speed):
-- Tokyo Jungle (2GB): ~3-5 minutes
-- Large games (30GB+): ~30-60 minutes
+- Small game (2GB): ~3-5 minutes
+- Large game (30GB+): ~30-60 minutes
 
 **Batch Mode**: Process one at a time; run in background with `nohup` or `tmux`:
 ```bash
@@ -167,7 +167,7 @@ ISO mode added via `Dumper.DetectIso()` — bypasses physical drive enumeration 
 - **No concurrent dumps** within single CLI invocation (I/O bound on USB)
 - **ZIP files** are extracted to temp directory; original ZIPs not modified
 - **Multi-disc games** (rare): Each disc extracted separately to same output directory
-- **Trailing period filenames** (e.g., Demon's Souls): Handled automatically
+- **Trailing period filenames**: Handled automatically
 - **Disc quirks** (mastering errors): Logged but don't block extraction
 
 ## Security
