@@ -25,7 +25,7 @@ for (int i = 0; i < cmdArgs.Count; i++)
 if (string.IsNullOrEmpty(input))
 {
     AnsiConsole.MarkupLine("[red]Error: missing input (ISO file, ZIP, or directory)[/]");
-    AnsiConsole.MarkupLine("Usage: ps3dump <input> [--output DIR] [--ird-cache DIR] [--workers N]");
+    AnsiConsole.WriteLine("Usage: ps3-batch-dumper <input> [--output DIR] [--ird-cache DIR] [--workers N]");
     Environment.Exit(1);
 }
 
