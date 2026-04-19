@@ -63,6 +63,7 @@ public partial class Dumper: IDisposable
     private ImmutableArray<byte> detectionBytesExpected;
     private byte[] sectorIV;
     private Stream driveStream;
+    private bool isIsoMode;
     private static readonly byte[] Iso9660PrimaryVolumeDescriptorHeader = [0x01, 0x43, 0x44, 0x30, 0x30, 0x31, 0x01, 0x00];
     public static readonly NameValueCollection RegionMapping = new()
     {
@@ -385,6 +386,71 @@ public partial class Dumper: IDisposable
         Log.Debug($"Dump folder name: {OutputDir}");
     }
 
+    public void DetectIso(string isoPath, Func<Dumper, string> outputDirFormatter = null)
+    {
+        outputDirFormatter ??= d => PatternFormatter.Format(SettingsProvider.Settings.DumpNameTemplate, new()
+        {
+            [Patterns.ProductCode] = d.ProductCode,
+            [Patterns.ProductCodeLetters] = d.ProductCode?[..4],
+            [Patterns.ProductCodeNumbers] = d.ProductCode?[4..],
+            [Patterns.Title] = d.Title,
+            [Patterns.Region] = RegionMapping[d.ProductCode?[2..3] ?? ""],
+        });
+
+        if (!File.Exists(isoPath))
+            throw new FileNotFoundException($"ISO file not found: {isoPath}");
+
+        Log.Info("Loading ISO: " + isoPath);
+        driveStream = File.Open(isoPath, new FileStreamOptions
+        {
+            Mode = FileMode.Open,
+            Access = FileAccess.Read,
+            Share = FileShare.Read,
+            Options = FileOptions.RandomAccess,
+        });
+        discReader = new(driveStream, true, true);
+        isIsoMode = true;
+        InputDevicePath = isoPath;
+
+        if (!discReader.FileExists(@"\PS3_DISC.SFB"))
+            throw new InvalidOperationException("PS3_DISC.SFB not found in ISO — not a valid PS3 disc image");
+
+        using (var sfbStream = discReader.OpenFile(@"\PS3_DISC.SFB", FileMode.Open, FileAccess.Read))
+        {
+            discSfbData = new byte[sfbStream.Length];
+            sfbStream.ReadExactly(discSfbData);
+        }
+        var titleId = CheckDiscSfb(discSfbData);
+
+        if (!discReader.FileExists(@"\PS3_GAME\PARAM.SFO"))
+            throw new InvalidOperationException("PARAM.SFO not found — not a valid PS3 disc image");
+
+        using (var sfoStream = discReader.OpenFile(@"\PS3_GAME\PARAM.SFO", FileMode.Open, FileAccess.Read))
+            ParamSfo = ParamSfo.ReadFrom(sfoStream);
+        CheckParamSfo(ParamSfo);
+
+        if (titleId != ProductCode)
+            Log.Warn($"Product codes in ps3_disc.sfb ({titleId}) and in param.sfo ({ProductCode}) do not match");
+
+        // Count files for progress tracking
+        var allFiles = discReader.GetFiles(@"\", "*.*", SearchOption.AllDirectories).ToArray();
+        if (SettingsProvider.Settings.FilterRequired)
+        {
+            var prefixList = SettingsProvider.Settings.FilterDirList
+                .Select(f => @"\" + f + @"\")
+                .ToArray();
+            allFiles = allFiles.Where(f => !prefixList.Any(f.StartsWith)).ToArray();
+        }
+        TotalFileCount = allFiles.Length;
+        TotalFileSize = allFiles.Sum(f => { try { return discReader.GetFileLength(f); } catch { return 0L; } });
+
+        var path = new string(outputDirFormatter(this).ToCharArray().Where(c => !InvalidChars.Contains(c)).ToArray());
+        var separators = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+        var pathParts = path.Split(separators, StringSplitOptions.RemoveEmptyEntries).Select(p => p.TrimEnd('.'));
+        OutputDir = string.Join(Path.DirectorySeparatorChar, pathParts);
+        Log.Debug($"Dump folder name: {OutputDir}");
+    }
+
     public async Task FindDiscKeyAsync(string discKeyCachePath)
     {
         // reload disc keys
@@ -426,76 +492,80 @@ public partial class Dumper: IDisposable
         if (untestedKeys.Count == 0)
             throw new KeyNotFoundException("No valid disc decryption key was found");
 
-        List<string> physicalDrives = [];
-        Log.Trace("Trying to enumerate physical drives...");
-        try
+        // ISO mode: driveStream and discReader already set up in DetectIso
+        if (!isIsoMode)
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                physicalDrives = EnumeratePhysicalDrivesWindows();
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                physicalDrives = EnumeratePhysicalDrivesLinux();
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                physicalDrives = EnumeratePhysicalDevicesMacOs();
-            else
-                throw new NotImplementedException("Current OS is not supported");
-        }
-        catch (Exception e)
-        {
-            Log.Error(e);
-            throw;
-        }
-        Log.Debug($"Found {physicalDrives.Count} physical drives");
-        await Task.Yield();
-
-        if (physicalDrives is [])
-            throw new InvalidOperationException("No optical drives were found");
-
-        foreach (var drive in physicalDrives)
-        {
+            List<string> physicalDrives = [];
+            Log.Trace("Trying to enumerate physical drives...");
             try
             {
-                Log.Trace($"Checking physical drive {drive}...");
-                await using var discStream = File.Open(drive, new FileStreamOptions
-                {
-                    Mode = FileMode.Open,
-                    Access = FileAccess.Read,
-                    Options = FileOptions.Asynchronous | FileOptions.SequentialScan
-                });
-                var tmpDiscReader = new CDReader(discStream, true, true);
-                if (tmpDiscReader.FileExists("PS3_DISC.SFB"))
-                {
-                    Log.Trace("Found PS3_DISC.SFB, getting sector data...");
-                    var discSfbInfo = tmpDiscReader.GetFileInfo("PS3_DISC.SFB");
-                    if (discSfbInfo.Length == discSfbData.Length)
-                    {
-                        var buf = new byte[discSfbData.Length];
-                        var sector = tmpDiscReader.PathToClusters(discSfbInfo.FullName).First().Offset;
-                        Log.Trace($"PS3_DISC.SFB sector number is {sector}, reading content...");
-                        discStream.Seek(sector * tmpDiscReader.ClusterSize, SeekOrigin.Begin);
-                        await discStream.ReadExactlyAsync(buf, 0, buf.Length).ConfigureAwait(false);
-                        if (buf.SequenceEqual(discSfbData))
-                        {
-                            SelectedPhysicalDevice = drive;
-                            break;
-                        }
-                        Log.Trace("SFB content check failed, skipping the drive");
-                    }
-                }
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    physicalDrives = EnumeratePhysicalDrivesWindows();
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    physicalDrives = EnumeratePhysicalDrivesLinux();
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                    physicalDrives = EnumeratePhysicalDevicesMacOs();
+                else
+                    throw new NotImplementedException("Current OS is not supported");
             }
             catch (Exception e)
             {
-                Log.Debug($"Skipping drive {drive}: {e.Message}");
+                Log.Error(e);
+                throw;
             }
+            Log.Debug($"Found {physicalDrives.Count} physical drives");
             await Task.Yield();
+
+            if (physicalDrives is [])
+                throw new InvalidOperationException("No optical drives were found");
+
+            foreach (var drive in physicalDrives)
+            {
+                try
+                {
+                    Log.Trace($"Checking physical drive {drive}...");
+                    await using var discStream = File.Open(drive, new FileStreamOptions
+                    {
+                        Mode = FileMode.Open,
+                        Access = FileAccess.Read,
+                        Options = FileOptions.Asynchronous | FileOptions.SequentialScan
+                    });
+                    var tmpDiscReader = new CDReader(discStream, true, true);
+                    if (tmpDiscReader.FileExists("PS3_DISC.SFB"))
+                    {
+                        Log.Trace("Found PS3_DISC.SFB, getting sector data...");
+                        var discSfbInfo = tmpDiscReader.GetFileInfo("PS3_DISC.SFB");
+                        if (discSfbInfo.Length == discSfbData.Length)
+                        {
+                            var buf = new byte[discSfbData.Length];
+                            var sector = tmpDiscReader.PathToClusters(discSfbInfo.FullName).First().Offset;
+                            Log.Trace($"PS3_DISC.SFB sector number is {sector}, reading content...");
+                            discStream.Seek(sector * tmpDiscReader.ClusterSize, SeekOrigin.Begin);
+                            await discStream.ReadExactlyAsync(buf, 0, buf.Length).ConfigureAwait(false);
+                            if (buf.SequenceEqual(discSfbData))
+                            {
+                                SelectedPhysicalDevice = drive;
+                                break;
+                            }
+                            Log.Trace("SFB content check failed, skipping the drive");
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Log.Debug($"Skipping drive {drive}: {e.Message}");
+                }
+                await Task.Yield();
+            }
+            if (SelectedPhysicalDevice == null)
+                throw new AccessViolationException("Direct disk access to the drive was denied");
+
+            Log.Debug($"Selected physical drive {SelectedPhysicalDevice}");
+            driveStream = File.Open(SelectedPhysicalDevice, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            // find disc license file
+            discReader = new(driveStream, true, true);
         }
-        if (SelectedPhysicalDevice == null)
-            throw new AccessViolationException("Direct disk access to the drive was denied");
-
-        Log.Debug($"Selected physical drive {SelectedPhysicalDevice}");
-        driveStream = File.Open(SelectedPhysicalDevice, FileMode.Open, FileAccess.Read, FileShare.Read);
-
-        // find disc license file
-        discReader = new(driveStream, true, true);
         FileRecord detectionRecord = null;
         var expectedBytes = ImmutableArray<byte>.Empty;
         try
@@ -687,37 +757,52 @@ public partial class Dumper: IDisposable
                 CurrentFileNumber++;
                 var targetFilename = file.TargetFileName;
 
-                var trailingPeriod = targetFilename.EndsWith('.');
-                var inputFilePath = Path.Combine(InputDevicePath, targetFilename);
-                // BLES00932 Demon's Souls: trailing . is trimmed on both Windows and Linux
-                if (trailingPeriod && !File.Exists(inputFilePath))
+                string inputFilePath;
+                if (isIsoMode)
                 {
-                    Log.Warn($"Potential mastering error in {targetFilename}");
-                    targetFilename = targetFilename.TrimEnd('.');
+                    // CDReader uses backslash paths with leading backslash (e.g., \PS3_GAME\PARAM.SFO)
+                    inputFilePath = @"\" + targetFilename.Replace(Path.DirectorySeparatorChar, '\\');
+                    if (!discReader.FileExists(inputFilePath))
+                    {
+                        Log.Error($"Missing {file.TargetFileName}");
+                        BrokenFiles.Add((file.TargetFileName, "missing"));
+                        continue;
+                    }
+                }
+                else
+                {
+                    var trailingPeriod = targetFilename.EndsWith('.');
                     inputFilePath = Path.Combine(InputDevicePath, targetFilename);
-                }
-                // BLJS92001 Tsugime Ranko: trailing . is replaced with #ABCD in Windows, but is kept as . on Linux
-                if (trailingPeriod && OperatingSystem.IsWindows() && !File.Exists(inputFilePath))
-                {
-                    var inputDir = Path.GetDirectoryName(inputFilePath);
-                    var testNameBase = Path.GetFileName(inputFilePath);
-                    var options = new EnumerationOptions {IgnoreInaccessible = true, RecurseSubdirectories = false};
-                    var lst = Directory.GetFiles(inputDir, testNameBase + "#*", options);
-                    if (lst is [var match])
+                    // BLES00932 Demon's Souls: trailing . is trimmed on both Windows and Linux
+                    if (trailingPeriod && !File.Exists(inputFilePath))
                     {
-                        Log.Warn($"Using {match} as a match for {file.TargetFileName}");
-                        inputFilePath = match;
+                        Log.Warn($"Potential mastering error in {targetFilename}");
+                        targetFilename = targetFilename.TrimEnd('.');
+                        inputFilePath = Path.Combine(InputDevicePath, targetFilename);
                     }
-                    else
+                    // BLJS92001 Tsugime Ranko: trailing . is replaced with #ABCD in Windows, but is kept as . on Linux
+                    if (trailingPeriod && OperatingSystem.IsWindows() && !File.Exists(inputFilePath))
                     {
-                        Log.Error($"Found {lst.Length} potential matches for {file.TargetFileName}");
+                        var inputDir = Path.GetDirectoryName(inputFilePath);
+                        var testNameBase = Path.GetFileName(inputFilePath);
+                        var options = new EnumerationOptions {IgnoreInaccessible = true, RecurseSubdirectories = false};
+                        var lst = Directory.GetFiles(inputDir, testNameBase + "#*", options);
+                        if (lst is [var match])
+                        {
+                            Log.Warn($"Using {match} as a match for {file.TargetFileName}");
+                            inputFilePath = match;
+                        }
+                        else
+                        {
+                            Log.Error($"Found {lst.Length} potential matches for {file.TargetFileName}");
+                        }
                     }
-                }
-                if (!File.Exists(inputFilePath))
-                {
-                    Log.Error($"Missing {file.TargetFileName}");
-                    BrokenFiles.Add((file.TargetFileName, "missing"));
-                    continue;
+                    if (!File.Exists(inputFilePath))
+                    {
+                        Log.Error($"Missing {file.TargetFileName}");
+                        BrokenFiles.Add((file.TargetFileName, "missing"));
+                        continue;
+                    }
                 }
 
                 var outputFilePath = Path.Combine(outputPathBase, targetFilename);
@@ -742,7 +827,9 @@ public partial class Dumper: IDisposable
                     {
                         tries--;
                         await using var outputStream = File.Open(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.Read);
-                        await using var inputStream = File.Open(inputFilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        await using var inputStream = (Stream)(isIsoMode
+                            ? discReader.OpenFile(inputFilePath, FileMode.Open, FileAccess.Read)
+                            : File.Open(inputFilePath, FileMode.Open, FileAccess.Read, FileShare.Read));
                         await using var decrypter = new Decrypter(inputStream, driveStream, decryptionKey, file.StartSector, sectorSize, unprotectedRegions);
                         Decrypter = decrypter;
                         await decrypter.CopyToAsync(outputStream, 8 * 1024 * 1024, Cts.Token).ConfigureAwait(false);
