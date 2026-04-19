@@ -137,7 +137,7 @@ Point RPCS3 to the output directory:
 **Batch Mode**: Process one at a time; run in background with `nohup` or `tmux`:
 ```bash
 tmux new -s ps3dump
-nohup ~/ps3dump-release/CLI /tank/media/Games/roms/ps3 --output /tank/media/Games/ps3_extracted &
+nohup ~/ps3dump-release/CLI ~/roms/ps3 --output ~/games/ps3_extracted &
 ```
 
 ## Cross-Platform Notes
